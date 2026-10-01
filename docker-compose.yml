@@ -1,0 +1,84 @@
+# ==============================================================================
+# Docker Compose Architecture for Banking Fraud Detection MLOps Platform
+# Services:
+#   - backend: FastAPI production API (Port 8000)
+#   - frontend: React 19 / Vite Nginx SPA (Port 5173 -> 80)
+#   - mlflow: MLflow experiment tracking server (Port 5000)
+# ==============================================================================
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fraud-detection-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - BACKEND_HOST=0.0.0.0
+      - BACKEND_PORT=8000
+      - ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000
+      - MODEL_VERSION=1.0.0
+      - DECISION_THRESHOLD=0.50
+      - MLFLOW_TRACKING_URI=sqlite:///mlflow.db
+    volumes:
+      - prediction_logs:/app/logs
+      - ./mlflow.db:/app/mlflow.db
+      - ./mlruns:/app/mlruns
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - fraud-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_BASE_URL=http://localhost:8000
+    container_name: fraud-detection-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:80/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - fraud-net
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fraud-detection-mlflow
+    command: ["mlflow", "ui", "--backend-store-uri", "sqlite:///mlflow.db", "--host", "0.0.0.0", "--port", "5000"]
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlflow.db:/app/mlflow.db
+      - ./mlruns:/app/mlruns
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - fraud-net
+
+volumes:
+  prediction_logs:
+    driver: local
+
+networks:
+  fraud-net:
+    driver: bridge
